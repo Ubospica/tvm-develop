@@ -182,7 +182,6 @@ inline Tensor DoCommReduce(const Tensor& data, FReduce func, const Array<PrimExp
 inline Tensor CommReduce(const Tensor& data, const Array<Integer>& axis, FReduce func,
                          bool keepdims, bool atleast1d) {
   auto ndim = data->shape.size();
-  ICHECK_NE(ndim, 0) << "Cannot reduce a 0 dim Tensor";
   auto real_axis = GetRealAxis(static_cast<int>(ndim), axis);
   auto target_shape = MakeReduceTargetShape(real_axis, data, keepdims, atleast1d);
   return DoCommReduce(data, func, target_shape, real_axis,

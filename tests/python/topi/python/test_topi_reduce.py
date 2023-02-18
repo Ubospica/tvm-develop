@@ -183,5 +183,47 @@ def test_complex_reduce(target, dev):
     tvm.testing.assert_allclose(out_tvm.numpy(), out_npy, 1e-3, 1e-3)
 
 
-if __name__ == "__main__":
-    tvm.testing.main()
+def test_zero_dim_reduce(target, dev):
+    in_shape = ()
+    dtype = "float32"
+    A = te.placeholder(shape=in_shape, name="A", dtype=dtype)
+    B = topi.sum(A, keepdims=True)
+    C = topi.sum(B, keepdims=False)
+    D = topi.prod(C)
+    E = topi.min(D)
+    F = topi.max(E)
+
+    with tvm.target.Target(target):
+        s = tvm.topi.testing.get_reduce_schedule(target)(F)
+    foo = tvm.build(s, [A, F], target, name="sum")
+
+    in_npy = np.random.uniform(-1, 1, size=in_shape).astype(dtype)
+    out_npy = in_npy
+
+    data_tvm = tvm.nd.array(in_npy, device=dev)
+    out_tvm = tvm.nd.empty(shape=out_npy.shape, device=dev, dtype=dtype)
+    foo(data_tvm, out_tvm)
+    tvm.testing.assert_allclose(out_tvm.numpy(), out_npy, 1e-3, 1e-3)
+test_zero_dim_reduce("llvm", tvm.cpu())
+
+def test_zero_dim_bool_reduce(target, dev):
+    in_shape = ()
+    dtype = "bool"
+    A = te.placeholder(shape=in_shape, name="A", dtype=dtype)
+    B = topi.all(A)
+    C = topi.any(B)
+
+    with tvm.target.Target(target):
+        s = tvm.topi.testing.get_reduce_schedule(target)(C)
+    foo = tvm.build(s, [A, C], target, name="sum")
+    in_npy = np.random.choice(a=[False, True], size=in_shape)
+    out_npy = in_npy
+
+    data_tvm = tvm.nd.array(in_npy, device=dev)
+    out_tvm = tvm.nd.empty(shape=out_npy.shape, device=dev, dtype=dtype)
+    foo(data_tvm, out_tvm)
+    np.testing.assert_equal(out_tvm.numpy(), out_npy)
+
+
+# if __name__ == "__main__":
+#     tvm.testing.main()
