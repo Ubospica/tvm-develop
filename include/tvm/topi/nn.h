@@ -680,7 +680,15 @@ inline Tensor nll_loss(const Tensor& predictions, const Tensor& targets, const T
                                     tvm::tir::make_const(predictions->dtype, 0));
           },
           name, tag);
-      return topi::divide(T, W);
+      auto W_elim_zero = tvm::te::compute(
+          {},
+          [&](const tvm::Array<tvm::tir::Var>& target_indices) {
+            auto c = W();
+            return tvm::tir::Select(c != tvm::tir::make_const(W->dtype, 0), c,
+                                    tvm::tir::make_const(W->dtype, 1));
+          },
+          name, tag);
+      return topi::divide(T, W_elim_zero);
     } else {
       return T;
     }
@@ -709,8 +717,16 @@ inline Tensor nll_loss(const Tensor& predictions, const Tensor& targets, const T
                                   tvm::tir::make_const(predictions->dtype, 0));
         },
         name, tag);
-    return topi::divide(topi::sum(T, tvm::Array<Integer>(nullptr)),
-                        topi::sum(W, tvm::Array<Integer>(nullptr)));
+    auto W_sum = topi::sum(W, tvm::Array<Integer>(nullptr));
+    auto W_elim_zero = tvm::te::compute(
+        {},
+        [&](const tvm::Array<tvm::tir::Var>& target_indices) {
+          auto c = W_sum();
+          return tvm::tir::Select(c != tvm::tir::make_const(W->dtype, 0), c,
+                                  tvm::tir::make_const(W->dtype, 1));
+        },
+        name, tag);
+    return topi::divide(topi::sum(T, tvm::Array<Integer>(nullptr)), W_elim_zero);
   } else if (reduction == "sum") {
     return topi::sum(T, tvm::Array<Integer>(nullptr));
   } else {  // reduction == "none"

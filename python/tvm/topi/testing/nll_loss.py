@@ -66,7 +66,7 @@ def nll_loss(predictions, targets, weights, reduction="mean", ignore_index=-100)
             res[index] = -predictions[pred_index] * weights[class_id]
             weight_sum += weights[class_id]
     if reduction == "mean":
-        return np.sum(res) / weight_sum
+        return np.sum(res) / weight_sum if weight_sum else np.sum(res)
     if reduction == "sum":
         return np.sum(res)
     return res

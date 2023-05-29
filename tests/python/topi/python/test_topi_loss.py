@@ -35,6 +35,7 @@ prediction_shape, reduction, ignore_index, dtype = tvm.testing.parameters(
     ((5,), "mean", -100, "float32"),
     ((5,), "mean", 3, "float32"),
     ((5,), "none", -100, "float32"),
+    ((10, 1), "mean", 1, "float32"),
 )
 
 
