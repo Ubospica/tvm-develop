@@ -589,7 +589,8 @@ class GradientMutator : private ExprMutator {
     // Step 1. Copy function
     auto* old_func = mod->Lookup(func_name).as<FunctionNode>();
     CHECK(old_func) << func_name << "is not a Relax Function";
-    auto new_func = CopyWithNewVars(GetRef<Function>(old_func));
+    auto copier = FunctionCopier();
+    auto new_func = copier.Copy(GetRef<Function>(old_func));
 
     // Step 2. Handle the checkpoints and eliminate start_checkpoint and end_checkpoint ops
     auto checkpoint_collected = CheckpointCollector::Collect(new_func);
@@ -601,18 +602,15 @@ class GradientMutator : private ExprMutator {
 
     // Step 4. Handle require_grads
     // When require_grads is not specified, it would be set to all params of the function
-    if (require_grads) {
-      CheckRequireGrads(require_grads.value(), old_func->params, func_name);
+    if (!require_grads) {
+      require_grads = new_func->params;
+    } else {
+      require_grads = CheckAndMapRequireGrads(require_grads.value(), copier.var_map, func_name);
     }
-    // then map the parameter list into new params
-    auto require_grads_value = require_grads.value_or(old_func->params).Map([&](const Var& v) {
-      return new_func->params[std::find(old_func->params.begin(), old_func->params.end(), v) -
-                              old_func->params.begin()];
-    });
 
     // Step 5. Generate the adjoint function, use RemoveAllUnused to simplify it, and then return
     // the IRModule with the adjoint function
-    return GradientMutator(mod, require_grads_value, target_index, checkpoints)
+    return GradientMutator(mod, require_grads.value(), target_index, checkpoints)
         .AddAdjointFunction(new_func, func_name, true);
   }
 
@@ -703,7 +701,8 @@ class GradientMutator : private ExprMutator {
       target_var_ = GetRef<Var>(var);
     } else if (auto* tuple = e.as<TupleNode>()) {
       CHECK(target_index >= 0 && target_index < static_cast<int>(tuple->fields.size()))
-          << "target_index should be in the range of the number of return values of the function. "
+          << "target_index should be in the range of the number of return values of the "
+             "function. "
              "But the specified target_index is "
           << target_index << ", while the number of return values is " << tuple->fields.size();
       auto* var = tuple->fields[target_index].as<VarNode>();
@@ -724,24 +723,27 @@ class GradientMutator : private ExprMutator {
 
   // Check every Var in require_grads:
   // 1. there should be no duplicate var
-  // 2. every var should be a parameter of the function
+  // 2. every var should be a parameter or a intermediate var in the function
   // 3. the type of the input var should be Tensor of floating point dtype, or Tuple of that
-  static void CheckRequireGrads(const Array<Var>& require_grads, const Array<Var>& func_params,
-                                const String& func_name) {
+  static Array<Var> CheckAndMapRequireGrads(const Array<Var>& require_grads,
+                                            const Map<Var, Var>& var_map, const String& func_name) {
     VarIdSet var_set;
+    Array<Var> mapped_vars;
     for (const auto& var : require_grads) {
-      CHECK(std::find(func_params.begin(), func_params.end(), var) != func_params.end())
-          << "There is no Var named " << var->name_hint() << " in the parameters of the function "
-          << func_name;
+      auto it = var_map.find(var);
+      CHECK(it != var_map.end()) << "There is no Var named " << var->name_hint()
+                                 << " in the function " << func_name;
       CHECK_EQ(var_set.count(var->vid), 0)
           << "Var " << var->name_hint() << " appears more than once";
       var_set.emplace(var->vid);
+      mapped_vars.push_back((*it).second);
 
       CHECK(IsNestedTensorConditioned(GetStructInfo(var), IsFloatTensorSInfo))
           << "Only Tensors of floating point dtype or Tuples of float "
              "Tensors can require gradients, but the StructInfo of Var "
           << var->name_hint() << " is " << GetStructInfo(var);
     }
+    return mapped_vars;
   }
 
   // differentiation sources
