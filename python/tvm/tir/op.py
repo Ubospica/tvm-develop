@@ -1212,7 +1212,7 @@ def ptx_mma_sp(
     )
 
 
-def mma_store(dtype, m, n, dst_ptr, src_ptr, src_offset, dst_stride):
+def mma_store(dtype, m, n, dst_ptr, dst_offset, src_ptr, src_offset):
     """TVM intrinsic for storing the result of PTX MMA into a destination pointer
 
     Parameters
@@ -1229,14 +1229,14 @@ def mma_store(dtype, m, n, dst_ptr, src_ptr, src_offset, dst_stride):
     dst_ptr : Var
         The destination pointer variable.
 
+    dst_offset : Expr
+        The target offset.
+
     src_ptr : Var
         The source pointer variable.
 
     src_offset : Expr
         The source offset.
-
-    dst_stride : Var
-        The destination stride.
 
     Returns
     -------
@@ -1249,9 +1249,9 @@ def mma_store(dtype, m, n, dst_ptr, src_ptr, src_offset, dst_stride):
         m,
         n,
         dst_ptr,
+        dst_offset,
         src_ptr,
         src_offset,
-        dst_stride,
     )
 
 

@@ -692,6 +692,7 @@ TVM_REGISTER_GLOBAL_SIZE("script.ir_builder.tir.Float", Float);
 TVM_REGISTER_GLOBAL_SIZE("script.ir_builder.tir.UInt", UInt);
 TVM_REGISTER_GLOBAL_SIZE("script.ir_builder.tir.Int", Int);
 
+TVM_REGISTER_GLOBAL("a").set_body_typed(Int32);
 #define TVM_REGISTER_GLOBAL_LANES(Prefix, Func)                           \
   TVM_REGISTER_GLOBAL(Prefix TVM_TMP_STR(x4)).set_body_typed(Func##x4);   \
   TVM_REGISTER_GLOBAL(Prefix TVM_TMP_STR(x8)).set_body_typed(Func##x8);   \

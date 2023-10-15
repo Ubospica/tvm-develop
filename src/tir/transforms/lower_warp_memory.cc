@@ -274,7 +274,7 @@ class WarpAccessRewriter : protected StmtExprMutator {
     }
 
     if (op->op.same_as(builtin::mma_store())) {
-      return RewriteIndicesAt(op, {3});
+      return RewriteIndicesAt(op, {4});
     }
 
     if (op->op.same_as(builtin::mma_fill())) {

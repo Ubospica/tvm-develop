@@ -205,9 +205,9 @@ def test_tir_op_mma_store():
         16,
         16,
         buffer.access_ptr("w"),
+        0,
         buffer_w.data,
         buffer_w.elem_offset,
-        x,
     )
     assert expr.op.name == "tir.mma_store"
 

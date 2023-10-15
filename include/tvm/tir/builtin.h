@@ -735,7 +735,7 @@ TVM_DLL const Op& create_barriers();
  *        complex index manipulation behind this intrinsic to simplify TIR lowering passes (e.g.
  *        LowerWarpMemory).
  *
- * void mma_store(IntImm m, IntImm n, Var dst_ptr, Var src_ptr, Expr src_offset, Var dst_stride);
+ * void mma_store(IntImm m, IntImm n, Var dst_ptr, Expr src_offset, Var src_ptr, Expr src_offset);
  */
 TVM_DLL const Op& mma_store();
 
