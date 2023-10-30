@@ -16,7 +16,7 @@
 # under the License.
 """Pre-defined pipelines.
 
-oRelax enables flexible pipeline optimizations before min build.
+Relax enables flexible pipeline optimizations before min build.
 This namespace offers a pre-defined collection that can be used
 as it is or serves as a basis to do further composition.
 """

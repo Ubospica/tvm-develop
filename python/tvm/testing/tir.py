@@ -79,7 +79,7 @@ def mma_schedule(
         sch.bind(f_1, "threadIdx.y")
         sch.vectorize(f_3)
         offset = 8 if in_dtype == "float16" else 16
-        sch.storage_align(block_read, 0, axis=-2, factor=32, offset=offset)
+        # sch.storage_align(block_read, 0, axis=-2, factor=32, offset=offset)
 
         return block_read
 
@@ -117,9 +117,12 @@ def mma_schedule(
     else:
         loop_b = tile_wmma_fragment(B_warp, k_inner, 16)
 
+    sch.mod.show()
     sch.transform_layout(A_warp, ("write", 0), index_map_A)
     sch.transform_layout(B_warp, ("write", 0), index_map_B)
     sch.transform_layout(C_warp, ("read", 0), index_map_C)
+
+    sch.mod.show()
 
     sch.tensorize(loop_a, ldmatrix_a_intrin)
     sch.tensorize(loop_b, ldmatrix_b_intrin)

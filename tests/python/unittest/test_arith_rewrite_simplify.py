@@ -20,6 +20,7 @@ import inspect
 import pytest
 
 import tvm
+import tvm.testing
 from tvm import te, tir
 
 from tvm.tir import truncdiv as tdiv, truncmod as tmod, floordiv as fld, floormod as flm
@@ -663,6 +664,10 @@ class TestMinIndex(BaseCompare):
         TestCase(tvm.te.min(x + y, x + z), tvm.te.min(y, z) + x),
         TestCase(tvm.te.min(x - y, x - z), x - tvm.te.max(y, z)),
         TestCase(tvm.te.min(y - x, z - x), tvm.te.min(y, z) - x),
+        TestCase(tvm.te.min(x, x+y), x, y >= 0),
+        TestCase(tvm.te.min(x, x+y), x+y, y <= 0),
+        TestCase(tvm.te.min(x, x-y), x-y, y >= 0),
+        TestCase(tvm.te.min(x, x-y), x, y <= 0),
         TestCase(tvm.te.min(tvm.te.min(x, 1), 10), tvm.te.min(x, 1)),
         TestCase(tvm.te.min(tvm.te.min(x, 11), 10), tvm.te.min(x, 10)),
         TestCase(tvm.te.min(x * 3, 9), tvm.te.min(x, 3) * 3),
@@ -734,6 +739,10 @@ class TestMaxIndex(BaseCompare):
         TestCase(tvm.te.max(x + y, x + z), tvm.te.max(y, z) + x),
         TestCase(tvm.te.max(x - y, x - z), x - tvm.te.min(y, z)),
         TestCase(tvm.te.max(y - x, z - x), tvm.te.max(y, z) - x),
+        TestCase(tvm.te.max(x, x+y), x+y, y >= 0),
+        TestCase(tvm.te.max(x, x+y), x, y <= 0),
+        TestCase(tvm.te.max(x, x-y), x, y >= 0),
+        TestCase(tvm.te.max(x, x-y), x-y, y <= 0),
         TestCase(tvm.te.max(tvm.te.max(x, 1), 10), tvm.te.max(x, 10)),
         TestCase(tvm.te.max(tvm.te.max(x, 11), 10), tvm.te.max(x, 11)),
         TestCase(tvm.te.max(x * 3, 9), tvm.te.max(x, 3) * 3),

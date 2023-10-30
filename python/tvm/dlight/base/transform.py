@@ -61,9 +61,11 @@ class ApplyDefaultSchedule:  # pylint: disable=too-few-public-methods
         updated_functions = {}
         for g_var, func in mod.functions.items():
             if isinstance(func, tir.PrimFunc) and not _is_scheduled(func):
+                print("handling: ", g_var)
                 sch = _apply_rules(func, target, self.rules, tunable=False)
                 if sch is not None:
                     assert len(sch) == 1
+                    print("succeeded: ", g_var)
                     updated_functions[g_var] = sch[0].mod["main"].with_attr("tir.is_scheduled", 1)
         for g_var, func in updated_functions.items():
             mod[g_var] = func

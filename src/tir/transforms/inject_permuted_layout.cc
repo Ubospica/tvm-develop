@@ -124,8 +124,8 @@ class PermutedLayoutInjectorBase : protected IRMutatorWithAnalyzer {
     return blk;
   }
 
-  static const size_t VECTORIZE_FACTOR = 8;
-  static const size_t BANK_SIZE_BYTES = 128;
+  static constexpr size_t VECTORIZE_FACTOR = 8;
+  static constexpr size_t BANK_SIZE_BYTES = 128;
   String permuted_layout_mode_ = "";
   String scope_block_name_;
 
