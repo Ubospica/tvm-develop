@@ -32,9 +32,13 @@ from tvm.tir.schedule.schedule import BlockRV
 from tvm.tir.stmt import ForKind
 from tvm.tir.tensor_intrin.cuda import (
     LDMATRIX_16x16_A_DYN_INTRIN,
+    # LDMATRIX_16x16_A_TRANS_DYN_INTRIN,
     LDMATRIX_16x16_B_DYN_INTRIN,
     LDMATRIX_16x16_B_TRANS_DYN_INTRIN,
-    MMA_f16f16f32_TRANS_INTRIN,
+    MMA_f16f16f32_TRANS_A_B_INTRIN,
+    MMA_f16f16f32_TRANS_A_INTRIN,
+    MMA_f16f16f32_TRANS_A_TRANS_B_INTRIN,
+    MMA_f16f16f32_TRANS_B_INTRIN,
     MMA_fill_16x16_f32_INTRIN,
     MMA_store_16x16_f32_global_INTRIN,
     MMA_store_16x16_f32_shared_dyn_INTRIN,
@@ -423,8 +427,6 @@ def inline_transpose_block(sch: tir.Schedule, blocks: List[tir.schedule.BlockRV]
     return result_blocks
 
 
-
-
 def check_sm_version(arch: str) -> int:
     sm_version = arch.replace("sm_", "")
     return int(sm_version) if sm_version.isdigit() else -1
@@ -595,19 +597,21 @@ class MatmulTensorizationMMA(ScheduleRule):
         def fetch_input(block_outer, read_buffer_idx, tensor_name: Literal["A", "B"], is_transpose):
             block_read = sch.cache_read(block_outer, read_buffer_idx, "shared.dyn")
 
-            if is_transpose:
-                pass
-            auto_inline_producers(sch, block_read, [dequantize_block] if dequantize_block else [])
             sch.compute_at(block_read, k0)
+            auto_inline_producers(sch, block_read, [dequantize_block] if dequantize_block else [])
 
             # is_identity, is_transpose = is_identity_or_transpose_block(sch.get(block_read))
 
             if is_transpose:
+                v0, v1 = sch.get_loops(block_read)[-2:]
+                sch.reorder(v1, v0)
+                sch.transform_layout(block_read, ("write", 0), lambda b, i, j: (b, j, i))
                 # specifical handle transpose read (for NN matmul or TT matmul)
-                block_read_new = sch.cache_read(block_read, 0, "shared.dyn")
-                sch.compute_at(block_read_new, k0)
-                sch.compute_inline(block_read)
-                block_read = block_read_new
+                # block_read_new = sch.cache_read(block_read, 0, "shared.dyn")
+                # sch.compute_at(block_read_new, k0)
+                # sch.compute_inline(block_read)
+                # block_read = block_read_new
+
             sch.mod.show()
 
             # can_cp_async = is_transpose or is_identity
@@ -633,18 +637,23 @@ class MatmulTensorizationMMA(ScheduleRule):
             mma_read = sch.cache_read(block_outer, read_buffer_idx, "warp")
             sch.compute_at(mma_read, k1)
 
-            sch.split(sch.get_loops(mma_read)[-2], [None, micro_size_spatial])
+            micro_size_1, micro_size_2 = (
+                (micro_size_spatial, micro_size_k)
+                if not is_transpose
+                else (micro_size_k, micro_size_spatial)
+            )
+            v00, v01 = sch.split(sch.get_loops(mma_read)[-2], [None, micro_size_1])
+            v10, v11 = sch.split(sch.get_loops(mma_read)[-1], [None, micro_size_2])
+            sch.reorder(v00, v10, v01, v11)
 
             sch.transform_layout(
                 mma_read,
                 ("write", 0),
                 lambda v0, v1, v2: (
                     v0,
-                    v1 // micro_size_spatial,
-                    v2 // micro_size_k,
-                    *shared_16x16_to_ldmatrix_32x8_layout(
-                        v1 % micro_size_spatial, v2 % micro_size_k
-                    ),
+                    v1 // micro_size_1,
+                    v2 // micro_size_2,
+                    *shared_16x16_to_ldmatrix_32x8_layout(v1 % micro_size_1, v2 % micro_size_2),
                 ),
             )
 
@@ -653,12 +662,8 @@ class MatmulTensorizationMMA(ScheduleRule):
 
             return block_read, mma_read, can_cp_async
 
-        block_read_a, mma_read_a, can_cp_async_a = fetch_input(
-            block_outer, 0, "A", is_transpose_a
-        )
-        block_read_b, mma_read_b, can_cp_async_b = fetch_input(
-            block_outer, 1, "B", is_transpose_b
-        )
+        block_read_a, mma_read_a, can_cp_async_a = fetch_input(block_outer, 0, "A", is_transpose_a)
+        block_read_b, mma_read_b, can_cp_async_b = fetch_input(block_outer, 1, "B", is_transpose_b)
 
         # create write cache to store matrix from wmma fragments to shared memory and global memory
         def store_output(block_outer, write_buffer_idx, write_loop_ndim, block_sizes):
@@ -736,8 +741,8 @@ class MatmulTensorizationMMA(ScheduleRule):
 
         sch.tensorize(sch.get_loops(block_init_c_inner)[-2], MMA_fill_16x16_f32_INTRIN)
         sch.tensorize(sch.get_loops(mma_read_a)[-2], LDMATRIX_16x16_A_DYN_INTRIN)
-        sch.tensorize(sch.get_loops(mma_read_b)[-2], LDMATRIX_16x16_B_DYN_INTRIN)
-        sch.tensorize(sch.get_loops(block_inner)[-3], MMA_f16f16f32_TRANS_INTRIN)
+        sch.tensorize(sch.get_loops(mma_read_b)[-2], LDMATRIX_16x16_B_TRANS_DYN_INTRIN)
+        sch.tensorize(sch.get_loops(block_inner)[-3], MMA_f16f16f32_TRANS_A_TRANS_B_INTRIN)
         # sch.tensorize(sch.get_loops(store)[-2], MMA_store_16x16_f32_shared_dyn_INTRIN)
         sch.tensorize(sch.get_loops(store)[-2], MMA_store_16x16_f32_shared_dyn_INTRIN_SIMPLE)
 
@@ -767,7 +772,7 @@ class MatmulTensorization(ScheduleRule):
 
     def apply(  # pylint: disable=too-many-locals,missing-docstring
         self,
-    func: tir.PrimFunc,
+        func: tir.PrimFunc,
         target: Target,
         _: bool,
     ) -> Optional[tir.Schedule]:
