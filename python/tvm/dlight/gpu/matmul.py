@@ -347,11 +347,11 @@ def get_dequantize_block(sch, blocks) -> Optional[BlockRV]:
 def is_identity_or_transpose_block(block_stmt: tir.Block) -> bool:
     iter_types = {iter_var.iter_type for iter_var in block_stmt.iter_vars}
     if iter_types != {IterVar.DataPar}:
-        return False
+        return False, False
     if not isinstance(block_stmt.body, tir.BufferStore):
-        return False
+        return False, False
     if not isinstance(block_stmt.body.value, tir.BufferLoad):
-        return False
+        return False, False
 
     def get_access_vars(region: List[Range]) -> List[Var]:
         axes: List[Var] = []
@@ -377,35 +377,12 @@ def is_identity_or_transpose_block(block_stmt: tir.Block) -> bool:
     return is_identity, is_transpose
 
 
+def is_identity_block(block_stmt: tir.Block) -> bool:
+    return is_identity_or_transpose_block(block_stmt)[0]
+
+
 def is_transpose_block(block_stmt: tir.Block) -> bool:
-    iter_types = {iter_var.iter_type for iter_var in block_stmt.iter_vars}
-    if iter_types != {IterVar.DataPar}:
-        return False
-    if not isinstance(block_stmt.body, tir.BufferStore):
-        return False
-    if not isinstance(block_stmt.body.value, tir.BufferLoad):
-        return False
-
-    def get_access_vars(region: List[Range]) -> List[Var]:
-        axes: List[Var] = []
-        for r in region:
-            if not _is_one(r.extent):
-                return None
-            axes.extend(undefined_vars(r.min))
-        # remove trivial axis
-        trivial_vars = set(
-            iter_var.var for iter_var in block_stmt.iter_vars if _is_one(iter_var.dom.extent)
-        )
-        axes = [axis for axis in axes if axis not in trivial_vars]
-        # remove duplicate axis
-        axes = [var for i, var in enumerate(axes) if i == 0 or var != axes[i - 1]]
-        return axes
-
-    lhs_access_vars = get_access_vars(block_stmt.reads[0].region)[-2:]
-    rhs_access_vars = get_access_vars(block_stmt.writes[0].region)[-2:]
-    return list(lhs_access_vars) != list(rhs_access_vars) and set(lhs_access_vars) == set(
-        rhs_access_vars
-    )
+    return is_identity_or_transpose_block(block_stmt)[1]
 
 
 def inline_transpose_block(sch: tir.Schedule, blocks: List[tir.schedule.BlockRV]):
@@ -506,7 +483,7 @@ class MatmulTensorizationMMA(ScheduleRule):
         is_transpose_a = is_transpose_block(sch.get(block))
         block = sch.reindex(main_block, ("read", 1))
         sch.transform_layout(block, ("write", 0), b_index_map)
-        is_transpose_b = is_transpose_block(sch.get(block))
+        is_transpose_b = is_identity_block(sch.get(block))
         block = sch.reindex(main_block, ("write", 0))
         sch.transform_layout(block, ("read", 0), c_index_map)
         sch.transform_block_layout(main_block, matmul_index_map)
@@ -599,20 +576,11 @@ class MatmulTensorizationMMA(ScheduleRule):
 
             # is_identity, is_transpose = is_identity_or_transpose_block(sch.get(block_read))
 
-            if is_transpose:
+            if (tensor_name == "A" and is_transpose) or (tensor_name == "B" and not is_transpose):
+                # specifical handle transpose read (for NN matmul or TT matmul)
                 v0, v1 = sch.get_loops(block_read)[-2:]
                 sch.reorder(v1, v0)
                 sch.transform_layout(block_read, ("write", 0), lambda b, i, j: (b, j, i))
-                # specifical handle transpose read (for NN matmul or TT matmul)
-                # block_read_new = sch.cache_read(block_read, 0, "shared.dyn")
-                # sch.compute_at(block_read_new, k0)
-                # sch.compute_inline(block_read)
-                # block_read = block_read_new
-
-            sch.mod.show()
-
-            # can_cp_async = is_transpose or is_identity
-            can_cp_async = True
 
             vector_size = 8
 
@@ -627,7 +595,7 @@ class MatmulTensorizationMMA(ScheduleRule):
             sch.bind(f3, "threadIdx.x")
             sch.vectorize(f4)
 
-            # sch.annotate(block_read, ann_key="permuted_layout", ann_val=f"g2s_{tensor_name}")
+            sch.annotate(block_read, ann_key="permuted_layout", ann_val=f"g2s_{tensor_name}")
 
             micro_size_spatial = micro_size_m if tensor_name == "A" else micro_size_n
 
@@ -654,13 +622,12 @@ class MatmulTensorizationMMA(ScheduleRule):
                 ),
             )
 
-            # mma_read_block = sch.blockize(sch.get_loops(mma_read)[-2])
-            # sch.annotate(mma_read_block, ann_key="permuted_layout", ann_val=f"s2l_{tensor_name}")
+            sch.annotate(mma_read, ann_key="permuted_layout", ann_val=f"s2l_{tensor_name}")
 
-            return block_read, mma_read, can_cp_async
+            return block_read, mma_read
 
-        block_read_a, mma_read_a, can_cp_async_a = fetch_input(block_outer, 0, "A", is_transpose_a)
-        block_read_b, mma_read_b, can_cp_async_b = fetch_input(block_outer, 1, "B", is_transpose_b)
+        block_read_a, mma_read_a = fetch_input(block_outer, 0, "A", is_transpose_a)
+        block_read_b, mma_read_b = fetch_input(block_outer, 1, "B", is_transpose_b)
 
         # create write cache to store matrix from wmma fragments to shared memory and global memory
         def store_output(block_outer, write_buffer_idx, write_loop_ndim, block_sizes):
@@ -680,7 +647,7 @@ class MatmulTensorizationMMA(ScheduleRule):
             sch.bind(f3, "threadIdx.x")
             sch.vectorize(f4)
 
-            # sch.annotate(block_write, ann_key="permuted_layout", ann_val=f"s2g_C")
+            sch.annotate(block_write, ann_key="permuted_layout", ann_val=f"s2g_C")
 
             auto_inline_consumers(sch, block_write)
 
@@ -703,8 +670,7 @@ class MatmulTensorizationMMA(ScheduleRule):
                 ),
             )
 
-            mma_read_block = sch.blockize(sch.get_loops(store)[-2])
-            # sch.annotate(mma_read_block, ann_key="permuted_layout", ann_val=f"l2s_C")
+            sch.annotate(store, ann_key="permuted_layout", ann_val=f"l2s_C")
 
             return block_write, store
 
@@ -716,37 +682,36 @@ class MatmulTensorizationMMA(ScheduleRule):
         block_init_c_inner = sch.get_child_blocks(block_init_c)[0]
 
         # unroll k
-        # sch.annotate(k0, ann_key="pragma_auto_unroll_max_step", ann_val=unroll_depth)
-        # sch.unroll(k0)
-        # sch.annotate(k0, ann_key="pragma_unroll_explicit", ann_val=0)
+        # Profiling result shows unrolling k0 is not helpful on A100
         # k00, k01 = sch.split(k0, factors=[None, 8])
-        # sch.annotate(k01, ann_key="pragma_unroll_explicit", ann_val=0)
         # sch.unroll(k01)
 
         # Tensorization by hardware intrinsics
-        # from tvm.tir.tensor_intrin.cuda import (  # pylint: disable=import-outside-toplevel
-        #     get_wmma_intrin_group,
-        # )
+        from tvm.tir.tensor_intrin.cuda import (  # pylint: disable=import-outside-toplevel
+            get_mma_intrin_group,
+        )
 
-        # intrin_group = get_wmma_intrin_group(
-        #     load_scope="shared.dyn",
-        #     store_scope="shared.dyn",
-        #     in_dtype=str(dtype_a),
-        #     out_dtype=str(dtype_c),
-        #     trans_b=True,
-        # )
+        intrin_group = get_mma_intrin_group(
+            load_scope="shared.dyn",
+            store_scope="shared.dyn",
+            in_dtype=str(dtype_a),
+            out_dtype=str(dtype_c),
+            trans_a=is_transpose_a,
+            trans_b=is_transpose_b,
+        )
 
-        sch.tensorize(sch.get_loops(block_init_c_inner)[-2], MMA_fill_16x16_f32_INTRIN)
-        sch.tensorize(sch.get_loops(mma_read_a)[-2], LDMATRIX_f16_A_TRANS_DYN_INTRIN)
-        sch.tensorize(sch.get_loops(mma_read_b)[-2], LDMATRIX_f16_B_TRANS_DYN_INTRIN)
-        sch.tensorize(sch.get_loops(block_inner)[-3], MMA_f16f16f32_TRANS_A_TRANS_B_INTRIN)
-        # sch.tensorize(sch.get_loops(store)[-2], MMA_store_16x16_f32_shared_dyn_INTRIN)
-        sch.tensorize(sch.get_loops(store)[-2], MMA_store_16x16_f32_shared_dyn_INTRIN_SIMPLE)
+        print(intrin_group)
+
+        sch.tensorize(sch.get_loops(block_init_c_inner)[-2], intrin_group["init"])
+        sch.tensorize(sch.get_loops(mma_read_a)[-2], intrin_group["load_a"])
+        sch.tensorize(sch.get_loops(mma_read_b)[-2], intrin_group["load_b"])
+        sch.tensorize(sch.get_loops(block_inner)[-3], intrin_group["compute"])
+        sch.tensorize(sch.get_loops(store)[-2], intrin_group["store"])
 
         # async pipeline
-        # sch.annotate(k0, ann_key="software_pipeline_stage", ann_val=[0, 0, 3])
-        # sch.annotate(k0, ann_key="software_pipeline_order", ann_val=[0, 1, 2])
-        # sch.annotate(k0, ann_key="software_pipeline_async_stages", ann_val=[0])
+        sch.annotate(k0, ann_key="software_pipeline_stage", ann_val=[0, 0, 3])
+        sch.annotate(k0, ann_key="software_pipeline_order", ann_val=[0, 1, 2])
+        sch.annotate(k0, ann_key="software_pipeline_async_stages", ann_val=[0])
 
         # handle dequantize block
         if dequantize_block is not None:
@@ -778,7 +743,6 @@ class MatmulTensorization(ScheduleRule):
         )
 
         sch = tir.Schedule(func)
-        func.show(None, False)
         root_block = analysis.get_root_block(sch)
         blocks = sch.get_child_blocks(root_block)
 

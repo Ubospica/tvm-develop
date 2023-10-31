@@ -685,7 +685,7 @@ def get_mma_intrin_group(
 
     # e.g. mma_f16f16f32_trans_a_trans_b
     trans_a_str = trans_a + "_a" if trans_a != "" else ""
-    trans_b_str = trans_b + "_a" if trans_b != "" else ""
+    trans_b_str = trans_b + "_b" if trans_b != "" else ""
     compute_intrin = f"mma_{in_dtype}{in_dtype}{out_dtype}{trans_a_str}{trans_b_str}"
 
     # e.g. mma_store_16x16_f32_shared_dyn_simple_
