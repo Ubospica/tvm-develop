@@ -622,7 +622,8 @@ class MatmulTensorizationMMA(ScheduleRule):
                 ),
             )
 
-            sch.annotate(mma_read, ann_key="permuted_layout", ann_val=f"s2l_{tensor_name}")
+            mma_read_block = sch.blockize(sch.get_loops(mma_read)[-2])
+            sch.annotate(mma_read_block, ann_key="permuted_layout", ann_val=f"s2l_{tensor_name}")
 
             return block_read, mma_read
 
@@ -670,7 +671,8 @@ class MatmulTensorizationMMA(ScheduleRule):
                 ),
             )
 
-            sch.annotate(store, ann_key="permuted_layout", ann_val=f"l2s_C")
+            mma_read_block = sch.blockize(sch.get_loops(store)[-2])
+            sch.annotate(mma_read_block, ann_key="permuted_layout", ann_val=f"l2s_C")
 
             return block_write, store
 
@@ -683,6 +685,7 @@ class MatmulTensorizationMMA(ScheduleRule):
 
         # unroll k
         # Profiling result shows unrolling k0 is not helpful on A100
+        # sch.unroll(k0)
         # k00, k01 = sch.split(k0, factors=[None, 8])
         # sch.unroll(k01)
 
@@ -1044,7 +1047,7 @@ class Matmul(ScheduleRule):
                     if extent.value <= minimal_tensorize_threshold:
                         apply_tensorization = False
             if apply_tensorization:
-                tensorize_sch = MatmulTensorization().apply(func, target, _)
+                tensorize_sch = MatmulTensorizationMMA().apply(func, target, _)
                 if tensorize_sch is not None:
                     return tensorize_sch
 
