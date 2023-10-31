@@ -31,11 +31,8 @@ from tvm.tir.analysis import undefined_vars
 from tvm.tir.schedule.schedule import BlockRV
 from tvm.tir.stmt import ForKind
 from tvm.tir.tensor_intrin.cuda import (
-    LDMATRIX_16x16_A_DYN_INTRIN,
-    # LDMATRIX_16x16_A_TRANS_DYN_INTRIN,
-    LDMATRIX_16x16_B_DYN_INTRIN,
-    LDMATRIX_16x16_B_TRANS_DYN_INTRIN,
-    MMA_f16f16f32_TRANS_A_B_INTRIN,
+    LDMATRIX_f16_A_TRANS_DYN_INTRIN,
+    LDMATRIX_f16_B_TRANS_DYN_INTRIN,
     MMA_f16f16f32_TRANS_A_INTRIN,
     MMA_f16f16f32_TRANS_A_TRANS_B_INTRIN,
     MMA_f16f16f32_TRANS_B_INTRIN,
@@ -740,8 +737,8 @@ class MatmulTensorizationMMA(ScheduleRule):
         # )
 
         sch.tensorize(sch.get_loops(block_init_c_inner)[-2], MMA_fill_16x16_f32_INTRIN)
-        sch.tensorize(sch.get_loops(mma_read_a)[-2], LDMATRIX_16x16_A_DYN_INTRIN)
-        sch.tensorize(sch.get_loops(mma_read_b)[-2], LDMATRIX_16x16_B_TRANS_DYN_INTRIN)
+        sch.tensorize(sch.get_loops(mma_read_a)[-2], LDMATRIX_f16_A_TRANS_DYN_INTRIN)
+        sch.tensorize(sch.get_loops(mma_read_b)[-2], LDMATRIX_f16_B_TRANS_DYN_INTRIN)
         sch.tensorize(sch.get_loops(block_inner)[-3], MMA_f16f16f32_TRANS_A_TRANS_B_INTRIN)
         # sch.tensorize(sch.get_loops(store)[-2], MMA_store_16x16_f32_shared_dyn_INTRIN)
         sch.tensorize(sch.get_loops(store)[-2], MMA_store_16x16_f32_shared_dyn_INTRIN_SIMPLE)
