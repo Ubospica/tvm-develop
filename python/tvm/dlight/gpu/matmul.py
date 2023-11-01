@@ -180,17 +180,7 @@ def make_iter_fusion_index_map(
         fused_iters.get(kind, tir.IntImm(traits[0].extent.dtype, 0)) for kind in kind_order
     ]
 
-    is_transposed = False
-    if traits[-1].kind == kind_order[-2]:
-        for i in traits[:-1:-1]:
-            if i.kind == kind_order[-1]:
-                is_transposed = True
-                break
-            elif i.kind != kind_order[-2]:
-                break
-    print(is_transposed)
-
-    return tir.IndexMap(input_iters, final_indices, None), is_transposed
+    return tir.IndexMap(input_iters, final_indices, None)
 
 
 def detect_iter_traits(block: tir.Block) -> Optional[Tuple[List[IterTrait]]]:
@@ -281,24 +271,20 @@ def get_index_map(block: tir.Block) -> Optional[Tuple[tir.IndexMap, ...]]:
         return None
     A_traits, B_traits, C_traits, block_traits = traits
 
-    A_index_map, A_transpose = make_iter_fusion_index_map(
+    A_index_map = make_iter_fusion_index_map(
         A_traits, [IterKind.kIter_S, IterKind.kIter_I, IterKind.kIter_K]
     )
-    B_index_map, B_transpose = make_iter_fusion_index_map(
+    B_index_map = make_iter_fusion_index_map(
         B_traits, [IterKind.kIter_S, IterKind.kIter_J, IterKind.kIter_K]
     )
-    C_index_map, C_transpose = make_iter_fusion_index_map(
+    C_index_map = make_iter_fusion_index_map(
         C_traits, [IterKind.kIter_S, IterKind.kIter_I, IterKind.kIter_J]
     )
     matmul_index_map, _ = make_iter_fusion_index_map(
         block_traits, [IterKind.kIter_S, IterKind.kIter_I, IterKind.kIter_J, IterKind.kIter_K]
     )
 
-    return (matmul_index_map, A_index_map, B_index_map, C_index_map), (
-        A_transpose,
-        B_transpose,
-        C_transpose,
-    )
+    return matmul_index_map, A_index_map, B_index_map, C_index_map
 
 
 def get_reduction_blocks(sch, blocks) -> Optional[List[BlockRV]]:
@@ -425,6 +411,7 @@ class MatmulTensorizationMMA(ScheduleRule):
         if func.attrs is not None and "dlight.do_not_tensorize" in func.attrs.keys():
             return None
 
+        # We first inline all transpose blocks for later analysis of transposed A and B
         blocks = inline_transpose_block(sch, blocks)
 
         reduction_blocks = get_reduction_blocks(sch, blocks)
@@ -434,8 +421,19 @@ class MatmulTensorizationMMA(ScheduleRule):
         dequantize_block = get_dequantize_block(sch, blocks)
 
         main_block = reduction_blocks[0]
-        block_stmt = sch.get(main_block)
-        index_maps, transposes = get_index_map(block_stmt)
+        main_block_stmt = sch.get(main_block)
+
+        # Supported data types:
+        # fp16, fp16, fp16: fp16 precision
+        # fp16, fp16, fp32: fp16 mixed precision
+        dtype_a = main_block_stmt.reads[0].buffer.dtype
+        dtype_b = main_block_stmt.reads[1].buffer.dtype
+        dtype_c = main_block_stmt.writes[0].buffer.dtype
+        if dtype_a != dtype_b:
+            return None
+
+        # Get index maps
+        index_maps = get_index_map(main_block_stmt)
         if index_maps is None:
             return None
         matmul_index_map, a_index_map, b_index_map, c_index_map = index_maps
@@ -444,38 +442,18 @@ class MatmulTensorizationMMA(ScheduleRule):
         # Step 0. Get schedule config.
         # NOTE: we can analyze the config by the hardware spec in the future
 
-        block_m = 128
-        block_n = 128
-        block_k = 32
+        # tile size
+        block_m, block_n, block_k = 128, 128, 32
 
         # tensor core intrinsic size
-        micro_size_m = 16
-        micro_size_n = 16
-        micro_size_k = 16
+        micro_size_m, micro_size_n, micro_size_k = 16, 16, 16
 
-        thread_z = 2
-        thread_y = 2
-        warp_size = 32
-        thread_cnt = thread_y * thread_z * warp_size
-        k_cnt = block_k // micro_size_k
+        # thread size
+        # thread_x == warp_size
+        thread_z, thread_y, thread_x = 2, 2, 32
 
         vector_size = 8
-        unroll_depth = 256
-
-        # def is_cast_block(block):
-        #     return (
-        #         isinstance(block.body, tir.stmt.BufferStore)
-        #         and isinstance(block.body.value, tir.Cast)
-        #         and block.body.value.dtype == "float16"
-        #     )
-
-        # cast_block = None
-        # for block in sch.get_consumers(main_block):
-        #     if is_cast_block(sch.get(block)):
-        #         cast_block = block
-        #         break
-        # if cast_block is not None:
-        #     sch.reverse_compute_inline(cast_block)
+        unroll_depth = 4
 
         # Step 1. Normalize generic matmul to C[S, I, J] += A[S, I, K] * B[S, J, K]
         block = sch.reindex(main_block, ("read", 0))
@@ -489,56 +467,26 @@ class MatmulTensorizationMMA(ScheduleRule):
         sch.transform_block_layout(main_block, matmul_index_map)
 
         batch, i, j, k = sch.get_loops(main_block)
-        main_block_stmt = sch.get(main_block)
-        buffer_regions = list(main_block_stmt.reads) + list(main_block_stmt.writes)
 
-        # Supported data types:
-        # fp16, fp16, fp16: fp16 precision
-        # fp16, fp16, fp32: fp16 mixed precision
-        dtype_a, dtype_b, dtype_c = [DataType(region.buffer.dtype) for region in buffer_regions]
-        input_b, input_m, input_n, input_k = [sch.get(loop).extent for loop in [batch, i, j, k]]
-        l2_size = target.l2_cache_size_bytes
-        dtype_a_bytes, dtype_b_bytes, dtype_c_bytes = [
-            math.ceil(d.bits / 8) for d in [dtype_a, dtype_b, dtype_c]
-        ]
-        bank_size_bytes = 32 * 4
-        bank_cnt_a, bank_cnt_b = bank_size_bytes // dtype_a_bytes, bank_size_bytes // dtype_b_bytes
-
-        def get_z_order_factor(l2_size, input_k, dtype_bytes, input_spatial, block_size):
-            if l2_size != 0 and isinstance(input_k, (int, tir.IntImm)):
-                z_order_factor = l2_size / 3 / int(input_k) / dtype_bytes / block_size
-                if isinstance(input_spatial, (int, tir.IntImm)):
-                    block_cnt = math.ceil(int(input_spatial) / block_size)
-                    z_order_factor = math.ceil(block_cnt / math.ceil(block_cnt / z_order_factor))
-                else:
-                    z_order_factor = math.floor(z_order_factor)
-                return [None, z_order_factor]
-            else:
-                return [4, None]
-
-        z_order_factor_m = get_z_order_factor(l2_size, input_k, dtype_a_bytes, input_m, block_m)
-        z_order_factor_n = get_z_order_factor(l2_size, input_k, dtype_b_bytes, input_n, block_n)
-
-        z_order_factor_m = [1, None]
-        z_order_factor_n = [1, None]
-        # z_order_factor_m = [4, None]
-        # z_order_factor_n = [4, None]
-        print(f"z_order_factor_m={z_order_factor_m}, z_order_factor_n={z_order_factor_n}")
+        swizzle_factor_for_l2_m = [1, None]
+        swizzle_factor_for_l2_n = [1, None]
+        # swizzle_factor_for_l2_m = [4, None]
+        # swizzle_factor_for_l2_n = [4, None]
 
         # Step 2. Padding for dynamic shape kernels
         sch.pad_einsum(
             main_block,
             [
                 1,
-                (z_order_factor_m[0] or z_order_factor_m[1]) * block_m,
-                (z_order_factor_n[0] or z_order_factor_n[1]) * block_n,
+                swizzle_factor_for_l2_m[0] * block_m,
+                swizzle_factor_for_l2_n[0] * block_n,
                 block_k,
             ],
         )
 
-        # Step 3. Schedule matmul to use tensor core
+        # Step 3. Reorder loops for tiling
 
-        # inner loops for tensor core computation
+        # Step 3.1 inner loops for tensor core computation
         i, i_inner = sch.split(i, factors=[None, micro_size_m])
         j, j_inner = sch.split(j, factors=[None, micro_size_n])
         k, k_inner = sch.split(k, factors=[None, micro_size_k])
@@ -548,71 +496,72 @@ class MatmulTensorizationMMA(ScheduleRule):
         block_inner = main_block
         block_outer = sch.blockize(i_inner)
 
+        # Step 3.2 outer loops for tiling
         # split factors for i, j, and k
-        in_wrap_block_cnt_m = block_m // thread_z // micro_size_m
-        in_wrap_block_cnt_n = block_n // thread_y // micro_size_n
-        in_wrap_block_cnt_k = block_k // micro_size_k
+        micro_block_cnt_in_warp_m = block_m // thread_z // micro_size_m
+        micro_block_cnt_in_warp_n = block_n // thread_y // micro_size_n
+        micro_block_cnt_in_warp_k = block_k // micro_size_k
 
-        i_factors = z_order_factor_m + [thread_z, in_wrap_block_cnt_m]
-        j_factors = z_order_factor_n + [thread_y, in_wrap_block_cnt_n]
-        k_factors = [None, in_wrap_block_cnt_k]
+        i_factors = swizzle_factor_for_l2_m + [thread_z, micro_block_cnt_in_warp_m]
+        j_factors = swizzle_factor_for_l2_n + [thread_y, micro_block_cnt_in_warp_n]
+        k_factors = [None, micro_block_cnt_in_warp_k]
 
         i0, i1, i2, i3 = sch.split(i, factors=i_factors)
         j0, j1, j2, j3 = sch.split(j, factors=j_factors)
         k0, k1 = sch.split(k, factors=k_factors)
 
         sch.reorder(i0, j0, i1, j1, k0, i2, j2, k1, i3, j3)
-        block_axis = sch.fuse(batch, i0, j0, i1, j1)
 
+        block_axis = sch.fuse(batch, i0, j0, i1, j1)
         sch.bind(block_axis, "blockIdx.x")
+
         sch.bind(i2, "threadIdx.z")
         sch.bind(j2, "threadIdx.y")
 
+        # Step 4. Read/write to shared mem and register
         def fetch_input(block_outer, read_buffer_idx, tensor_name: Literal["A", "B"], is_transpose):
-            block_read = sch.cache_read(block_outer, read_buffer_idx, "shared.dyn")
+            # 1) Read to shared memory
+            block_read_smem = sch.cache_read(block_outer, read_buffer_idx, "shared.dyn")
+            sch.compute_at(block_read_smem, k0)
+            auto_inline_producers(sch, block_read_smem, [dequantize_block] if dequantize_block else [])
 
-            sch.compute_at(block_read, k0)
-            auto_inline_producers(sch, block_read, [dequantize_block] if dequantize_block else [])
-
-            # is_identity, is_transpose = is_identity_or_transpose_block(sch.get(block_read))
-
+            # For transposed read, we directly load transposed tensor from global
+            # Then use ldmatrix.trans to handle transpose later
             if (tensor_name == "A" and is_transpose) or (tensor_name == "B" and not is_transpose):
                 # specifical handle transpose read (for NN matmul or TT matmul)
-                v0, v1 = sch.get_loops(block_read)[-2:]
+                v0, v1 = sch.get_loops(block_read_smem)[-2:]
                 sch.reorder(v1, v0)
-                sch.transform_layout(block_read, ("write", 0), lambda b, i, j: (b, j, i))
+                sch.transform_layout(block_read_smem, ("write", 0), lambda b, i, j: (b, j, i))
 
-            vector_size = 8
-
-            fused = sch.fuse(*sch.get_loops(block_read)[-2:])
-
-            f0, f1, f2, f3, f4 = sch.split(
-                fused, [None, thread_z, thread_y, warp_size, vector_size]
-            )
-
+            # bind loops
+            fused = sch.fuse(*sch.get_loops(block_read_smem)[-2:])
+            f0, f1, f2, f3, f4 = sch.split(fused, [None, thread_z, thread_y, thread_x, vector_size])
             sch.bind(f1, "threadIdx.z")
             sch.bind(f2, "threadIdx.y")
             sch.bind(f3, "threadIdx.x")
             sch.vectorize(f4)
 
-            sch.annotate(block_read, ann_key="permuted_layout", ann_val=f"g2s_{tensor_name}")
+            # swizzling
+            sch.annotate(block_read_smem, ann_key="permuted_layout", ann_val=f"g2s_{tensor_name}")
 
+            # 2) Read to register
+            block_read_reg = sch.cache_read(block_outer, read_buffer_idx, "warp")
+            sch.compute_at(block_read_reg, k1)
+
+            # bind_loops
             micro_size_spatial = micro_size_m if tensor_name == "A" else micro_size_n
-
-            mma_read = sch.cache_read(block_outer, read_buffer_idx, "warp")
-            sch.compute_at(mma_read, k1)
-
             micro_size_1, micro_size_2 = (
                 (micro_size_spatial, micro_size_k)
                 if not is_transpose
                 else (micro_size_k, micro_size_spatial)
             )
-            v00, v01 = sch.split(sch.get_loops(mma_read)[-2], [None, micro_size_1])
-            v10, v11 = sch.split(sch.get_loops(mma_read)[-1], [None, micro_size_2])
+            v00, v01 = sch.split(sch.get_loops(block_read_reg)[-2], [None, micro_size_1])
+            v10, v11 = sch.split(sch.get_loops(block_read_reg)[-1], [None, micro_size_2])
             sch.reorder(v00, v10, v01, v11)
 
+            # reorder read axis to match the layout of ldmatrix
             sch.transform_layout(
-                mma_read,
+                block_read_reg,
                 ("write", 0),
                 lambda v0, v1, v2: (
                     v0,
@@ -622,26 +571,22 @@ class MatmulTensorizationMMA(ScheduleRule):
                 ),
             )
 
-            mma_read_block = sch.blockize(sch.get_loops(mma_read)[-2])
+            # swizzling
+            mma_read_block = sch.blockize(sch.get_loops(block_read_reg)[-2])
             sch.annotate(mma_read_block, ann_key="permuted_layout", ann_val=f"s2l_{tensor_name}")
 
-            return block_read, mma_read
+            return block_read_smem, block_read_reg
 
-        block_read_a, mma_read_a = fetch_input(block_outer, 0, "A", is_transpose_a)
-        block_read_b, mma_read_b = fetch_input(block_outer, 1, "B", is_transpose_b)
+        block_read_a, block_read_reg_a = fetch_input(block_outer, 0, "A", is_transpose_a)
+        block_read_b, block_read_reg_b = fetch_input(block_outer, 1, "B", is_transpose_b)
 
-        # create write cache to store matrix from wmma fragments to shared memory and global memory
-        def store_output(block_outer, write_buffer_idx, write_loop_ndim, block_sizes):
+        # Write to register, and then smem
+        def store_output(block_outer, write_buffer_idx):
             block_write = sch.cache_write(block_outer, write_buffer_idx, "shared.dyn")
             sch.reverse_compute_at(block_write, block_axis)
 
-            fused = sch.fuse(*sch.get_loops(block_write)[-write_loop_ndim:])
-
-            f0, f1, f2, f3, f4 = sch.split(
-                fused, [None, thread_z, thread_y, warp_size, vector_size]
-            )
-
-            block_m, block_n, micro_size_m, micro_size_n = block_sizes
+            fused = sch.fuse(*sch.get_loops(block_write)[-2:])
+            f0, f1, f2, f3, f4 = sch.split(fused, [None, thread_z, thread_y, thread_x, vector_size])
 
             sch.bind(f1, "threadIdx.z")
             sch.bind(f2, "threadIdx.y")
@@ -676,9 +621,7 @@ class MatmulTensorizationMMA(ScheduleRule):
 
             return block_write, store
 
-        block_write, store = store_output(
-            block_outer, 0, 2, [block_m, block_n, micro_size_m, micro_size_n]
-        )
+        block_write, store = store_output(block_outer, 0)
 
         block_init_c = sch.decompose_reduction(block_outer, k0)
         block_init_c_inner = sch.get_child_blocks(block_init_c)[0]
@@ -706,8 +649,8 @@ class MatmulTensorizationMMA(ScheduleRule):
         print(intrin_group)
 
         sch.tensorize(sch.get_loops(block_init_c_inner)[-2], intrin_group["init"])
-        sch.tensorize(sch.get_loops(mma_read_a)[-2], intrin_group["load_a"])
-        sch.tensorize(sch.get_loops(mma_read_b)[-2], intrin_group["load_b"])
+        sch.tensorize(sch.get_loops(block_read_reg_a)[-2], intrin_group["load_a"])
+        sch.tensorize(sch.get_loops(block_read_reg_b)[-2], intrin_group["load_b"])
         sch.tensorize(sch.get_loops(block_inner)[-3], intrin_group["compute"])
         sch.tensorize(sch.get_loops(store)[-2], intrin_group["store"])
 
@@ -758,7 +701,7 @@ class MatmulTensorization(ScheduleRule):
 
         main_block = reduction_blocks[0]
         block_stmt = sch.get(main_block)
-        index_maps, _ = get_index_map(block_stmt)
+        index_maps = get_index_map(block_stmt)
         if index_maps is None:
             return None
         matmul_index_map, a_index_map, b_index_map, c_index_map = index_maps
@@ -1047,7 +990,7 @@ class Matmul(ScheduleRule):
                     if extent.value <= minimal_tensorize_threshold:
                         apply_tensorization = False
             if apply_tensorization:
-                tensorize_sch = MatmulTensorizationMMA().apply(func, target, _)
+                tensorize_sch = MatmulTensorization().apply(func, target, _)
                 if tensorize_sch is not None:
                     return tensorize_sch
 
