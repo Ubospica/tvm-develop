@@ -280,7 +280,7 @@ def get_index_map(block: tir.Block) -> Optional[Tuple[tir.IndexMap, ...]]:
     C_index_map = make_iter_fusion_index_map(
         C_traits, [IterKind.kIter_S, IterKind.kIter_I, IterKind.kIter_J]
     )
-    matmul_index_map, _ = make_iter_fusion_index_map(
+    matmul_index_map = make_iter_fusion_index_map(
         block_traits, [IterKind.kIter_S, IterKind.kIter_I, IterKind.kIter_J, IterKind.kIter_K]
     )
 
@@ -523,7 +523,9 @@ class MatmulTensorizationMMA(ScheduleRule):
             # 1) Read to shared memory
             block_read_smem = sch.cache_read(block_outer, read_buffer_idx, "shared.dyn")
             sch.compute_at(block_read_smem, k0)
-            auto_inline_producers(sch, block_read_smem, [dequantize_block] if dequantize_block else [])
+            auto_inline_producers(
+                sch, block_read_smem, [dequantize_block] if dequantize_block else []
+            )
 
             # For transposed read, we directly load transposed tensor from global
             # Then use ldmatrix.trans to handle transpose later
@@ -582,31 +584,36 @@ class MatmulTensorizationMMA(ScheduleRule):
 
         # Write to register, and then smem
         def store_output(block_outer, write_buffer_idx):
-            block_write = sch.cache_write(block_outer, write_buffer_idx, "shared.dyn")
-            sch.reverse_compute_at(block_write, block_axis)
+            # 1) Write to shared memory
+            block_write_smem = sch.cache_write(block_outer, write_buffer_idx, "shared.dyn")
+            sch.reverse_compute_at(block_write_smem, block_axis)
+            auto_inline_consumers(sch, block_write_smem)
 
-            fused = sch.fuse(*sch.get_loops(block_write)[-2:])
+            # bind loops
+            fused = sch.fuse(*sch.get_loops(block_write_smem)[-2:])
             f0, f1, f2, f3, f4 = sch.split(fused, [None, thread_z, thread_y, thread_x, vector_size])
-
             sch.bind(f1, "threadIdx.z")
             sch.bind(f2, "threadIdx.y")
             sch.bind(f3, "threadIdx.x")
             sch.vectorize(f4)
 
-            sch.annotate(block_write, ann_key="permuted_layout", ann_val=f"s2g_C")
+            # swizzling
+            sch.annotate(block_write_smem, ann_key="permuted_layout", ann_val=f"s2g_C")
 
-            auto_inline_consumers(sch, block_write)
+            # 2) Write to register
+            block_write_reg = sch.cache_write(block_outer, write_buffer_idx, "warp")
 
-            store = sch.cache_write(block_outer, write_buffer_idx, "warp")
-            v0, v1, v2 = sch.get_loops(store)[-3:]
+            # bind loops
+            v0, v1, v2 = sch.get_loops(block_write_reg)[-3:]
             v11, v12, v13 = sch.split(v1, factors=[thread_z, None, micro_size_m])
             v21, v22, v23 = sch.split(v2, factors=[thread_y, None, micro_size_n])
             sch.reorder(v11, v21, v12, v22, v13, v23)
             sch.bind(v11, "threadIdx.z")
             sch.bind(v21, "threadIdx.y")
 
+            # reorder write axis to match the layout of ldmatrix
             sch.transform_layout(
-                store,
+                block_write_reg,
                 ("read", 0),
                 lambda v0, v1, v2: (
                     v0,
@@ -616,13 +623,15 @@ class MatmulTensorizationMMA(ScheduleRule):
                 ),
             )
 
-            mma_read_block = sch.blockize(sch.get_loops(store)[-2])
+            # swizzling
+            mma_read_block = sch.blockize(sch.get_loops(block_write_reg)[-2])
             sch.annotate(mma_read_block, ann_key="permuted_layout", ann_val=f"l2s_C")
 
-            return block_write, store
+            return block_write_smem, block_write_reg
 
-        block_write, store = store_output(block_outer, 0)
+        block_write_smem, block_write_reg = store_output(block_outer, 0)
 
+        # Step 5. Schedule tensor core computation
         block_init_c = sch.decompose_reduction(block_outer, k0)
         block_init_c_inner = sch.get_child_blocks(block_init_c)[0]
 
@@ -646,20 +655,19 @@ class MatmulTensorizationMMA(ScheduleRule):
             trans_b=is_transpose_b,
         )
 
-        print(intrin_group)
-
         sch.tensorize(sch.get_loops(block_init_c_inner)[-2], intrin_group["init"])
         sch.tensorize(sch.get_loops(block_read_reg_a)[-2], intrin_group["load_a"])
         sch.tensorize(sch.get_loops(block_read_reg_b)[-2], intrin_group["load_b"])
         sch.tensorize(sch.get_loops(block_inner)[-3], intrin_group["compute"])
-        sch.tensorize(sch.get_loops(store)[-2], intrin_group["store"])
+        sch.tensorize(sch.get_loops(block_write_reg)[-2], intrin_group["store"])
 
-        # async pipeline
+        # Step 6. Async pipeline
         sch.annotate(k0, ann_key="software_pipeline_stage", ann_val=[0, 0, 3])
         sch.annotate(k0, ann_key="software_pipeline_order", ann_val=[0, 1, 2])
         sch.annotate(k0, ann_key="software_pipeline_async_stages", ann_val=[0])
 
-        # handle dequantize block
+        # Step 7. Handle dequantize block
+        # Now we just add a dummy kernel to compute dequantize
         if dequantize_block is not None:
             auto_inline_producers(sch, dequantize_block)
             loops = sch.get_loops(dequantize_block)
