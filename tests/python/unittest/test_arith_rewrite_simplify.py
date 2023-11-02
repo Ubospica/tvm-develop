@@ -849,6 +849,7 @@ class TestComparisons(BaseCompare):
         TestCase(x * (-2) <= -1, tvm.tir.LE(1, x)),
         TestCase(x * (-2) <= -2, tvm.tir.LE(1, x)),
         TestCase(x * (-2) <= -3, tvm.tir.LE(2, x)),
+        TestCase(x // 2 < y, tvm.tir.IntImm("bool", True), x < y * 2),
         # DivMod rules
         # truc div
         TestCase(tdiv(x, 2) < 3, x < 6),

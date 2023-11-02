@@ -209,6 +209,26 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, int64_t val
     return CompareResult::kLE;
   }
 
+  auto bound = analyzer_->int_set(diff);
+  auto min_value = analyzer_->const_int_bound(this->VisitExpr(bound.min()))->min_value;
+  auto max_value = analyzer_->const_int_bound(this->VisitExpr(bound.max()))->max_value;
+
+  if (min_value == val && max_value == val) {
+    return CompareResult::kEQ;
+  }
+  if (min_value > val) {
+    return CompareResult::kGT;
+  }
+  if (max_value < val) {
+    return CompareResult::kLT;
+  }
+  if (min_value >= val) {
+    return CompareResult::kGE;
+  }
+  if (max_value <= val) {
+    return CompareResult::kLE;
+  }
+
   // modular analysis
   if (val == 0) {
     ModularSet dmod = analyzer_->modular_set(diff);
@@ -1647,6 +1667,7 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(LT ret) {
 
   if (IsIndexType(ret->a.dtype())) {
     CompareResult result = TryCompare(ret->a, ret->b);
+    // print result
     if (result == CompareResult::kLT) {
       return make_const(ret->dtype, true);
     }
