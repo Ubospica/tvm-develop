@@ -151,8 +151,9 @@ inline IntervalSet Combine<tir::Sub>(Analyzer* analyer, IntervalSet a, IntervalS
   if (b->IsEmpty()) return b;
   PrimExpr min_value =
       a->HasLowerBound() && b->HasUpperBound() ? a->min_value - b->max_value : neg_inf();
-  PrimExpr max_value =
-      a->HasUpperBound() && b->HasLowerBound() ? a->max_value - b->min_value : pos_inf();
+  PrimExpr max_value = a->HasUpperBound() && b->HasLowerBound()
+                           ? analyer->Simplify(a->max_value - b->min_value)
+                           : pos_inf();
   return IntervalSet(min_value, max_value);
 }
 
@@ -632,6 +633,7 @@ void IntSetAnalyzer::Impl::Update(const Var& var, const IntSet& info, bool can_o
           << "original=" << old_info.max() << ", new=" << info.max();
     }
   }
+  VLOG(0) << "Update " << var << " " << info;
   dom_map_.Set(var, info);
 }
 

@@ -209,6 +209,12 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, int64_t val
     return CompareResult::kLE;
   }
 
+  auto bound = analyzer_->int_set(diff);
+  if (CanProveGreaterEqual(-bound.max(), -val)) {
+    return CompareResult::kLT;
+  }
+  VLOG(0) << bound;
+
   // modular analysis
   if (val == 0) {
     ModularSet dmod = analyzer_->modular_set(diff);
@@ -685,6 +691,13 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const DivNode* op) {
 
     TVM_TRY_REWRITE(truncdiv(x, x), OneWithTypeLike(x));
     TVM_TRY_REWRITE(matches_one_of(truncdiv(x * c1, x), truncdiv(c1 * x, x)), c1);
+    TVM_TRY_REWRITE_IF(
+        truncdiv(x * c1 + c2, c1), x + truncdiv(c2, c1),
+        c1.Eval()->value > 0 && c2.Eval()->value >= 0 && CanProveGreaterEqual(x.Eval(), 0));
+    // TVM_TRY_REWRITE_IF(
+    //     truncdiv(x * c1 - c2, c1),
+    //     x - truncdiv(c2, c1) - (c2.Eval()->value % c1.Eval()->value == 0 ? 0 : 1),
+    //     c1.Eval()->value >= 0 && c2.Eval()->value > 0 && CanProveGreaterEqual(x.Eval(), 0));
 
     // Rules involving 2-operands.
     TVM_TRY_REWRITE_IF(truncdiv(x * c1 + y, c2), x * truncdiv(c1, c2) + truncdiv(y, c2),
