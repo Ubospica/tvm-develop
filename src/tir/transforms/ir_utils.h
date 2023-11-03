@@ -364,6 +364,15 @@ std::pair<int32_t, int32_t> GetWmmaFragmentDimSize(const std::string& shape_str,
  */
 std::optional<bool> IsHostFunc(const PrimFunc& func);
 
+/*! \brief Lookup the buffer associated with a data Var in a PrimFunc
+ *
+ * \param data The data Var of the target buffer
+ * \param func The function to be inspected
+ *
+ * \return The buffer if found. Otherwise, return NullOpt.
+ */
+Optional<Buffer> LookupBufferFromData(Var data, PrimFunc func);
+
 }  // namespace tir
 }  // namespace tvm
 #endif  // TVM_TIR_TRANSFORMS_IR_UTILS_H_

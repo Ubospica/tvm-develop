@@ -709,6 +709,48 @@ std::optional<bool> IsHostFunc(const PrimFunc& func) {
   }
 }
 
+Optional<Buffer> LookupBufferFromData(Var data, PrimFunc func) {
+  class BufferLookuper : private StmtVisitor {
+   public:
+    explicit BufferLookuper(const Var& data) : data_(std::move(data)) {}
+    using StmtVisitor::operator();
+
+    Optional<Buffer> result;
+
+   private:
+    void VisitStmt(const Stmt& stmt) final {
+      if (result) return;
+      StmtVisitor::VisitStmt(stmt);
+    }
+
+    void VisitStmt_(const BlockNode* op) {
+      auto check_buffer = [&](const Buffer& buffer) {
+        if (!result && buffer->data.same_as(data_)) {
+          result = buffer;
+        }
+      };
+      for (auto match_buffer : op->match_buffers) {
+        check_buffer(match_buffer->buffer);
+      }
+      for (auto buffer : op->alloc_buffers) {
+        check_buffer(buffer);
+      }
+      if (result) return;
+      StmtVisitor::VisitStmt_(op);
+    }
+
+    Var data_;
+  };
+
+  auto iter = func->buffer_map.find(data);
+  if (iter != func->buffer_map.end()) {
+    return (*iter).second;
+  }
+  auto lookuper = BufferLookuper(data);
+  lookuper(func->body);
+  return lookuper.result;
+}
+
 namespace transform {
 Pass ConvertSSA() {
   auto pass_func = [](IRModule mod, PassContext ctx) {
