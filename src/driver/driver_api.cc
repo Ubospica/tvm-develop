@@ -202,16 +202,21 @@ Array<tvm::transform::Pass> CreatePassList(bool disable_loop_partition) {
   pass_list.push_back(tir::transform::LowerInitBlock());
   pass_list.push_back(tir::transform::PlanAndUpdateBufferAllocationLocation());
   pass_list.push_back(tir::transform::ConvertBlocksToOpaque());
+  // pass_list.push_back(transform::PrintIR());
   pass_list.push_back(tir::transform::LiftThreadBinding());
   pass_list.push_back(tir::transform::ManifestSharedMemoryLocalStage());
+  // pass_list.push_back(transform::PrintIR());
   pass_list.push_back(tir::transform::CompactBufferAllocation());
+  // pass_list.push_back(transform::PrintIR());
   pass_list.push_back(tir::transform::LowerAutoCopy());
   pass_list.push_back(tir::transform::UnifyThreadBinding());
+  // pass_list.push_back(transform::PrintIR());
   pass_list.push_back(tir::transform::LowerMatchBuffer());
-  pass_list.push_back(tir::transform::Simplify());
+  // pass_list.push_back(transform::PrintIR());
   pass_list.push_back(tir::transform::InjectPermutedLayout());
-  pass_list.push_back(tir::transform::Simplify());
+  // pass_list.push_back(transform::PrintIR());
   pass_list.push_back(tir::transform::InjectSoftwarePipeline());
+  // pass_list.push_back(transform::PrintIR());
   pass_list.push_back(tir::transform::TransformMmaBufferLayout());
   pass_list.push_back(tir::transform::LowerOpaqueBlock());
   pass_list.push_back(tir::transform::FlattenBuffer());
@@ -219,6 +224,7 @@ Array<tvm::transform::Pass> CreatePassList(bool disable_loop_partition) {
   pass_list.push_back(tir::transform::BF16ComputeLegalize());
   pass_list.push_back(tir::transform::NarrowDataType(32));
   pass_list.push_back(tir::transform::Simplify());
+  // pass_list.push_back(transform::PrintIR());
 
   // Add user-defined phase-1 passes
   pass_list.insert(pass_list.end(), user_lower_phase1.begin(), user_lower_phase1.end());
@@ -231,8 +237,10 @@ Array<tvm::transform::Pass> CreatePassList(bool disable_loop_partition) {
   pass_list.push_back(tir::transform::VectorizeLoop(!disable_vectorize));
   pass_list.push_back(tir::transform::InjectVirtualThread());
   pass_list.push_back(tir::transform::InjectDoubleBuffer());
+  // pass_list.push_back(transform::PrintIR());
   if (!disable_storage_rewrite) {
     pass_list.push_back(tir::transform::StorageRewrite());
+    // pass_list.push_back(transform::PrintIR());
   }
   bool use_async_copy = pass_ctx->GetConfig<Bool>("tir.use_async_copy", Bool(false)).value();
 
@@ -584,7 +592,9 @@ transform::Sequential MixedModulePassManager(IRModule mixed_mod, Target target) 
 
   mixed_pass_list.push_back(tir::transform::ThreadSync("shared"));
   mixed_pass_list.push_back(tir::transform::ThreadSync("shared.dyn"));
+  // mixed_pass_list.push_back(transform::PrintIR());
   mixed_pass_list.push_back(tir::transform::MergeDynamicSharedMemoryAllocations());
+  // mixed_pass_list.push_back(transform::PrintIR());
   mixed_pass_list.push_back(tir::transform::ThreadSync("warp"));
   mixed_pass_list.push_back(tir::transform::InferFragment());
   mixed_pass_list.push_back(tir::transform::LowerThreadAllreduce());
@@ -602,6 +612,7 @@ transform::Sequential MixedModulePassManager(IRModule mixed_mod, Target target) 
 
   mixed_pass_list.push_back(tir::transform::AnnotateDeviceRegions());
   mixed_pass_list.push_back(tir::transform::SplitHostDevice());
+  // mixed_pass_list.push_back(transform::PrintIR());
 
   bool unpacked_api = mixed_mod->GetAttr<relay::Executor>(tvm::attr::kExecutor)
                           .value_or(relay::Executor::Create("graph", {}))
@@ -610,6 +621,7 @@ transform::Sequential MixedModulePassManager(IRModule mixed_mod, Target target) 
   if (unpacked_api) {
     mixed_pass_list.push_back(tir::transform::MakeUnpackedAPI());
   } else {
+    // mixed_pass_list.push_back(transform::PrintIR());
     mixed_pass_list.push_back(tir::transform::MakePackedAPI());
   }
   mixed_pass_list.push_back(tir::transform::FP8StorageLegalize());
@@ -669,7 +681,9 @@ transform::Sequential DeviceModulePassManager(IRModule mixed_mod, Target target)
 
   device_pass_list.push_back(tir::transform::BindTarget(target));
 
+  // device_pass_list.push_back(transform::PrintIR());
   device_pass_list.push_back(tir::transform::LowerWarpMemory());
+  // device_pass_list.push_back(transform::PrintIR());
   device_pass_list.push_back(tir::transform::Simplify());
   device_pass_list.push_back(tir::transform::LowerCustomDatatypes());
   device_pass_list.push_back(tir::transform::LowerDeviceStorageAccessInfo());

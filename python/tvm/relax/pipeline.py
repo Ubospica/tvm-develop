@@ -16,7 +16,7 @@
 # under the License.
 """Pre-defined pipelines.
 
-oRelax enables flexible pipeline optimizations before min build.
+Relax enables flexible pipeline optimizations before min build.
 This namespace offers a pre-defined collection that can be used
 as it is or serves as a basis to do further composition.
 """
@@ -24,6 +24,16 @@ as it is or serves as a basis to do further composition.
 import tvm
 from tvm import meta_schedule as ms
 from . import transform
+
+
+def debug_dump_script(mod, name):
+    """Debug dump mode"""
+    import os
+
+    dump_path = os.path.join("./dist/dump-output/", name)
+    with open(dump_path, "w") as outfile:
+        outfile.write(mod.script())
+    print(f"Dump mod to {dump_path}")
 
 
 def zero_pipeline(*, enable_warning: bool = False):
@@ -61,11 +71,18 @@ def zero_pipeline(*, enable_warning: bool = False):
                 transform.LegalizeOps(enable_warning=enable_warning),
                 transform.AnnotateTIROpPattern(),
                 transform.FoldConstant(),
-                transform.FuseOps(),
-                transform.FuseTIR(),
+                # transform.FuseOps(),
+                # transform.FuseTIR(),
             ]
         )
         mod = seq(mod)
+        # mod.show(None, False)
+        debug_dump_script(mod, "mod_before_fuseops.py")
+        mod = transform.FuseOps()(mod)
+        debug_dump_script(mod, "mod_after_fuseops.py")
+        mod = transform.FuseTIR()(mod)
+        debug_dump_script(mod, "mod_after_fusetir.py")
+
         if ms.Database.current():
             mod = transform.MetaScheduleApplyDatabase(enable_warning=enable_warning)(mod)
         return mod

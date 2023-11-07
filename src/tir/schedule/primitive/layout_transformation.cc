@@ -880,8 +880,19 @@ class TransformLayoutRewriter : private arith::IRMutatorWithAnalyzer {
 
     Block block = Downcast<Block>(Parent::VisitStmt_(op));
 
-    auto infered_access_regions = GetBlockReadWriteRegion(block, buffer_data_to_buffer_);
     auto* n = block.CopyOnWrite();
+    n->match_buffers.MutateByApply([this](const MatchBufferRegion& match_buffer) {
+      if (match_buffer->source->buffer.same_as(old_buffer_)) {
+        auto new_ranges = index_map_->MapRanges(match_buffer->source->region, &index_simplifier_);
+        return MatchBufferRegion(match_buffer->buffer, BufferRegion(new_buffer_, new_ranges));
+      } else {
+        return match_buffer;
+      }
+    });
+
+
+    auto infered_access_regions = GetBlockReadWriteRegion(GetRef<Block>(n), buffer_data_to_buffer_);
+
     RewriteAccessRegion(&n->reads, infered_access_regions[0]);
     RewriteAccessRegion(&n->writes, infered_access_regions[1]);
     n->alloc_buffers.MutateByApply([this](const Buffer& buffer) {
