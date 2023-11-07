@@ -569,6 +569,14 @@ PackedFunc VirtualMachineImpl::GetFunction(const String& name,
     });
   } else {
     // default case, look up closure in VM.
+    // VLOG(0) << "devices:";
+    // for (auto dev : devices) {
+    //   VLOG(0) << dev;
+    // }
+    // VLOG(0) << "allocators:";
+    // for (auto allocator : allocators) {
+    //   VLOG(0) << allocator->type();
+    // }
     if (Optional<VMClosure> opt = this->GetClosureInternal(name, true)) {
       auto clo = opt.value();
       return PackedFunc([sptr_to_self, this, clo](TVMArgs args, TVMRetValue* rv) {
@@ -794,7 +802,7 @@ void VirtualMachineImpl::InitFuncPool() {
 }
 
 void VirtualMachineImpl::RunInstrCall(VMFrame* curr_frame, Instruction instr) {
-  DLOG(INFO) << "\n  pc = " << pc_ << ", execute: " << GetFuncName(instr.func_idx);
+  // DLOG(INFO) << "\n  pc = " << pc_ << ", execute: " << GetFuncName(instr.func_idx);
   int args_begin_offset = instrument_ != nullptr ? 4 : 0;
   // Use the call arg stack from the current frame to increase reuse
   // and avoid re-allocation

@@ -78,6 +78,8 @@ class Allocator {
    *  \return A sized allocation in the form of a buffer.
    */
   virtual Buffer Alloc(ShapeTuple shape, DLDataType dtype, String mem_scope);
+  /*! \brief Clear the allocated memory. */
+  virtual void Clear();
   /*! \brief Free a buffer allocated by the allocator.
    *  \param buffer The buffer to free.
    */

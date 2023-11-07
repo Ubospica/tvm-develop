@@ -171,7 +171,9 @@ Allocator* MemoryManager::GetAllocator(Device dev) {
 void MemoryManager::Clear() {
   MemoryManager* m = MemoryManager::Global();
   std::lock_guard<std::mutex> lock(m->mutex_);
-  m->allocators_.clear();
+  for (const auto& [device, allocator] : m->allocators_) {
+    allocator->Clear();
+  }
 }
 
 Buffer Allocator::Alloc(ShapeTuple shape, DLDataType dtype, String mem_scope) {
@@ -205,6 +207,12 @@ runtime::NDArray Allocator::Empty(ShapeTuple shape, DLDataType dtype, DLDevice d
   container->manager_ctx = reinterpret_cast<void*>(buffer);
   container->dl_tensor.data = buffer->data;
   return runtime::NDArray(runtime::GetObjectPtr<Object>(container));
+}
+
+void Allocator::Clear() {
+  // This function by default does nothing.
+  // For naive allocator, no explicit manual clear is needed.
+  // Pooled allocator will override this method.
 }
 
 TVM_REGISTER_GLOBAL("vm.builtin.memory_manager.clear").set_body_typed(MemoryManager::Clear);
