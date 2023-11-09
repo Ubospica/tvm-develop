@@ -264,7 +264,8 @@ class WellFormedChecker : public relax::ExprVisitor,
         !op->GetAttr<Bool>(relax::attr::kForcePure).value_or(Bool(false))->value && op->is_pure &&
         ContainsImpureCall(op->body)) {
       Malformed(Diagnostic::Error(op)
-                << "Function " << op << " is annotated as pure but contains an impure call; "
+                << "The following function is annotated as pure but contains an impure call:\n"
+                << GetRef<Function>(op) << "\n"
                 << "please set " << relax::attr::kForcePure << " to true "
                 << "or use a pure operator variant (e.g., call_pure_packed) "
                 << "if it is necessary to override this judgment.");

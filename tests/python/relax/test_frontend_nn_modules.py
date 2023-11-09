@@ -463,28 +463,28 @@ def test_kv_cache():
                 lv: R.Tensor((8, 2, 4), dtype="float32") = R.zeros(
                     R.shape([8, 2, 4]), dtype="float32"
                 )
-                cache: R.Object = R.call_packed(
+                cache: R.Object = R.call_pure_packed(
                     "vm.builtin.attention_kv_cache_create",
                     lv,
                     R.shape([8, 2, 4]),
                     R.prim_value(0),
-                    sinfo_args=(R.Object,),
+                    sinfo_args=(R.Object(),),
                 )
                 lv1: R.Tuple(R.Object, R.Object) = _io, cache
                 gv: R.Tuple(R.Object, R.Object) = lv1
                 R.output(gv)
             return gv
 
-        @R.function
+        @R.function(pure=False)
         def forward(
             x: R.Tensor((2, 4), dtype="float32"), _io: R.Object, cache: R.Object
         ) -> R.Tuple(R.Tensor((4, 2, 4), dtype="float32"), R.Tuple(R.Object, R.Object)):
             R.func_attr({"num_input": 3})
             with R.dataflow():
-                lv2: R.Object = R.call_packed(
-                    "vm.builtin.attention_kv_cache_append", cache, x, sinfo_args=(R.Object,)
+                lv2: R.Object = R.call_pure_packed(
+                    "vm.builtin.attention_kv_cache_append", cache, x, sinfo_args=(R.Object(),)
                 )
-                lv3: R.Tensor((4, 2, 4), dtype="float32") = R.call_packed(
+                lv3: R.Tensor((4, 2, 4), dtype="float32") = R.call_pure_packed(
                     "vm.builtin.attention_kv_cache_view",
                     lv2,
                     R.shape([4, 2, 4]),

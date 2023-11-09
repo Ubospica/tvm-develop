@@ -40,11 +40,12 @@ from .utils import gen_call_tir_inputs
 class FunctionScope(object):
     """Auxiliary scope for function"""
 
-    def __init__(self, block_builder, name, params, attrs):
+    def __init__(self, block_builder, name, params, attrs, is_pure):
         self._bb = block_builder
         self._name = name
         self._params = params
         self._attrs = attrs
+        self._is_pure = is_pure
 
         # Blocks that have been collected within the function
         self._blocks = []
@@ -213,6 +214,7 @@ class BlockBuilder(Object):
         name: str,
         params: Optional[Union[Var, Tuple, List[Var]]] = None,
         attrs: Optional[Dict[str, Object]] = None,
+        is_pure: bool = True,
         private: bool = False,
     ) -> FunctionScope:
         """Annotate a Relax function.
@@ -229,6 +231,9 @@ class BlockBuilder(Object):
 
         attrs : Dict[str, Object], optional
             The function attrs
+
+        is_pure : bool, optional
+            Whether the function is annotated as pure.
 
         private : bool, optional
             Whether the function is annotated as private.
@@ -259,7 +264,7 @@ class BlockBuilder(Object):
         if not private:
             attrs["global_symbol"] = name
 
-        return FunctionScope(self, name, params, attrs)
+        return FunctionScope(self, name, params, attrs, is_pure)
 
     def testing_scope(self, def_vars: List[tir.Var]) -> TestingScope:
         """Start a scope for unit-testing purposes.
@@ -637,7 +642,7 @@ class BlockBuilder(Object):
 
         # do not specify ret_struct_info and let constructor deduce
         # from seqe.struct_info
-        func = rx.Function(self._func._params, seqe)
+        func = rx.Function(self._func._params, seqe, is_pure=self._func._is_pure)
         for key, value in self._func._attrs.items():
             func = func.with_attr(key, value)
         self.end_scope()

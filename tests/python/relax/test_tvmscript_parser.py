@@ -821,14 +821,14 @@ def test_direct_return():
 
 
 def test_call_packed():
-    @R.function
+    @R.function(pure=False)
     def foo(x: R.Tensor((32, 32), "float32")) -> R.Tensor:
         z = R.call_packed("vm.builtin.copy", x, sinfo_args=R.Tensor((32, 32), "float32"))
         return z
 
     x = relax.Var("x", R.Tensor((32, 32), "float32"))
     bb = relax.BlockBuilder()
-    with bb.function("foo", (x)):
+    with bb.function("foo", (x), is_pure=False):
         z = bb.emit(
             relax.Call(
                 relax.ExternFunc("vm.builtin.copy"),

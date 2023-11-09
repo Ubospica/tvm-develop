@@ -23,6 +23,7 @@ import numpy as np
 from tvm import relax as rx
 from tvm import tir
 from tvm._ffi import register_func
+from tvm.ir import Op
 from tvm.runtime import NDArray
 
 from . import op
@@ -569,9 +570,11 @@ class KVCache(Effect):
         init_shape = rx.ShapeExpr([self.init_seq_len] + self.unit_shape)
         return [
             bb.emit(
-                rx.Call(
+                rx.call_pure_packed(
                     rx.extern("vm.builtin.attention_kv_cache_create"),
-                    args=[rx.op.zeros(init_shape, self.dtype), init_shape, rx.PrimValue(0)],
+                    rx.op.zeros(init_shape, self.dtype),
+                    init_shape,
+                    rx.PrimValue(0),
                     sinfo_args=[rx.ObjectStructInfo()],
                 ),
                 name_hint=name_hint,
@@ -640,9 +643,10 @@ class KVCache(Effect):
         shape = rx.ShapeExpr([seq_len] + self.unit_shape)
         return Tensor(
             _expr=rx.BlockBuilder.current().emit(
-                rx.Call(
+                rx.call_pure_packed(
                     rx.extern("vm.builtin.attention_kv_cache_view"),
-                    args=[self.cache, shape],
+                    self.cache,
+                    shape,
                     sinfo_args=[rx.TensorStructInfo(shape, self.dtype)],
                 )
             )
@@ -663,9 +667,10 @@ class KVCache(Effect):
                 f'but got "{new_element.dtype}"'
             )
         self.cache = rx.BlockBuilder.current().emit(
-            rx.Call(
+            rx.call_pure_packed(
                 rx.extern("vm.builtin.attention_kv_cache_append"),
-                args=[self.cache, new_element._expr],
+                self.cache,
+                new_element._expr,
                 sinfo_args=[rx.ObjectStructInfo()],
             )
         )
