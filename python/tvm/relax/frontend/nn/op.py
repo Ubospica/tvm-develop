@@ -22,7 +22,6 @@ import math
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypeVar, Union
 
 import numpy as np
-
 from tvm import te
 from tvm import tir as _tir
 from tvm.script import tir as T
@@ -976,6 +975,36 @@ def softmax(x: Tensor, axis: int = -1, name: str = "softmax") -> Tensor:
     The input tensor is required to have float dtype
     """
     return wrap_nested(_op.nn.softmax(x._expr, axis), name)
+
+
+def nll_loss(x: Tensor, y: Tensor, name: str = "nll_loss") -> Tensor:
+    r"""Computes softmax.
+
+    .. math:: \text{softmax}(x)_i = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
+
+    Parameters
+    ----------
+    data: Tensor
+        The input data to the operator.
+
+    axis: int
+        The axis to sum over when computing softmax.
+        If not specified, it is by default the last axis of the input tensor.
+        Supports negative indexing.
+
+    name : str
+        Name hint.
+
+    Returns
+    -------
+    result : Tensor
+        The computed result.
+
+    Note
+    ----
+    The input tensor is required to have float dtype
+    """
+    return wrap_nested(_op.nn.nll_loss(x._expr, y._expr), name)
 
 
 def tanh(x: Tensor, name: str = "tanh") -> Tensor:

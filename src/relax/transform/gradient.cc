@@ -602,7 +602,7 @@ class BackwardBindingGenerator : private ExprVisitor {
 class GradientMutator : private ExprMutator {
  public:
   static IRModule Transform(IRModule mod, String func_name, Optional<Array<Var>> require_grads,
-                            int target_index) {
+                            int target_index, String grad_func_name_suffix) {
     // Step 1. Copy function
     auto* old_func = mod->Lookup(func_name).as<FunctionNode>();
     CHECK(old_func) << func_name << "is not a Relax Function";
@@ -624,7 +624,7 @@ class GradientMutator : private ExprMutator {
     // Step 4. Generate the adjoint function, use RemoveAllUnused to simplify it, and then return
     // the IRModule with the adjoint function
     return GradientMutator(mod, require_grads.value(), target_index, cp_collector)
-        .AddAdjointFunction(new_func, func_name, true);
+        .AddAdjointFunction(new_func, func_name, grad_func_name_suffix, true);
   }
 
  private:
@@ -637,7 +637,7 @@ class GradientMutator : private ExprMutator {
 
   // Add the adjoint function of func to the IRModule using BlockBuilder
   IRModule AddAdjointFunction(const Function& func, const String& func_name,
-                              bool remove_all_unused = true) {
+                              const String& grad_func_name_suffix, bool remove_all_unused = true) {
     // Step 4.1 forward -> forward + backward
     auto new_func = Downcast<Function>(VisitExpr(func));
 
@@ -655,7 +655,7 @@ class GradientMutator : private ExprMutator {
 
     // Step 4.4 mark the transformed function as public
     // because the original function may be public, and have gsymbol attribute as func_name
-    auto new_func_name = func_name + "_adjoint";
+    auto new_func_name = func_name + grad_func_name_suffix;
     auto new_func_with_gsymbol = WithAttr(new_func, tvm::attr::kGlobalSymbol, new_func_name);
 
     // Step 4.5 Add the transformed function to IRModule
@@ -778,10 +778,12 @@ class GradientMutator : private ExprMutator {
 
 namespace transform {
 
-Pass Gradient(String func_name, Optional<Array<Var>> require_grads, int target_index) {
+Pass Gradient(String func_name, Optional<Array<Var>> require_grads, int target_index,
+              String grad_func_name_suffix) {
   runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func = [=](IRModule mod,
                                                                             PassContext pc) {
-    return relax::GradientMutator::Transform(mod, func_name, require_grads, target_index);
+    return relax::GradientMutator::Transform(mod, func_name, require_grads, target_index,
+                                             grad_func_name_suffix);
   };
   return CreateModulePass(/*pass_function=*/pass_func,
                           /*opt_level=*/0,

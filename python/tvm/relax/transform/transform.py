@@ -22,16 +22,15 @@ import types
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np  # type: ignore
-
 import tvm.ir
-from tvm.relax import Expr, Var, StructInfo
+from tvm.relax import Expr, StructInfo, Var
 from tvm.relax.dpl import DFPattern
 from tvm.runtime import NDArray, Object
 from tvm.tir import IndexMap, PrimFunc
 
+from ..expr import Var
 from . import _ffi_api
 from .legalize_ops.common import LegalizeFunc
-from ..expr import Var
 
 
 @tvm._ffi.register_object("relax.FunctionPass")
@@ -47,7 +46,10 @@ class DataflowBlockPass(tvm.ir.transform.Pass):
 
 
 def Gradient(
-    func_name: str, require_grads: Optional[Union[Var, List[Var]]] = None, target_index: int = 0
+    func_name: str,
+    require_grads: Optional[Union[Var, List[Var]]] = None,
+    target_index: int = 0,
+    grad_func_name_suffix: str = "_adjoint",
 ) -> tvm.ir.transform.Pass:
     """Reverse-mode automatic differentiation.
 
@@ -220,7 +222,7 @@ def Gradient(
     if require_grads is not None and not isinstance(require_grads, list):
         require_grads = [require_grads]
 
-    return _ffi_api.Gradient(func_name, require_grads, target_index)  # type: ignore
+    return _ffi_api.Gradient(func_name, require_grads, target_index, grad_func_name_suffix)  # type: ignore
 
 
 def ToNonDataflow() -> tvm.ir.transform.Pass:

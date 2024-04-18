@@ -476,7 +476,7 @@ class PatternCheckContext : public ObjectRef {
  * \note ConvertToDataflow may need to be called first to provide dataflow blocks.
  */
 TVM_DLL Pass Gradient(String func_name, Optional<Array<Var>> require_grads = NullOpt,
-                      int target_index = 0);
+                      int target_index = 0, String grad_func_name_suffix = "_adjoint");
 
 /*!
  * \brief Apply pattern matching to each function in the given module, and group matched
