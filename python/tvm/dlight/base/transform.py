@@ -59,9 +59,11 @@ class ApplyDefaultSchedule:  # pylint: disable=too-few-public-methods
         updated_functions = {}
         for g_var, func in mod.functions_items():
             if isinstance(func, tir.PrimFunc) and not _is_scheduled(func):
-                print("scheduling func:", g_var.name_hint)
-                if (g_var.name_hint == "nll_loss_without_weight"):
-                    print("debug")
+                # print("scheduling func:", g_var.name_hint)
+                # if g_var.name_hint == "nll_loss_without_weight":
+                #     print("debug")
+                # if g_var.name_hint == "te_nll_loss_backward_no_weight":
+                #     print("debug")
                 sch = _apply_rules(func, target, self.rules, tunable=False)
                 if sch is not None:
                     assert len(sch) == 1
@@ -78,7 +80,7 @@ def _apply_rules(
     tunable: bool,
 ) -> Optional[List[tir.Schedule]]:
     for rule in rules:
-        print("trying:", type(rule))
+        # print("trying:", type(rule))
         space = rule.apply(func, target, tunable)
         if space is None:
             continue

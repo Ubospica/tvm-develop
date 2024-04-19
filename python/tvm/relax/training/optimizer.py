@@ -20,13 +20,14 @@ from decimal import Decimal
 from typing import List, Optional, Tuple, Union
 
 import numpy as np  # type: ignore
-
 import tvm
 
 from ..block_builder import BlockBuilder
+from ..expr import Function
+from ..expr import Tuple as RxTuple
+from ..expr import TupleGetItem, Var, const
+from ..op import add, divide, multiply, sqrt, subtract
 from ..struct_info import TensorStructInfo, TupleStructInfo
-from ..op import add, subtract, multiply, divide, sqrt
-from ..expr import const, Var, Function, TupleGetItem, Tuple as RxTuple
 
 
 # TODO(chaofan, yixin): Migrate key logics to C++
@@ -266,7 +267,7 @@ class SGD(Optimizer):
         self.lr = float(lr)
         self.weight_decay = float(weight_decay)
 
-    def init(self, params: Union[Var, List[Var]]) -> "SGD":
+    def init(self, params: Union[Var, List[Var]], dev: tvm.runtime.Device = None) -> "SGD":
         """Set the parameters, determine the dtype, and construct the initial state for the
         optimizer.
 
@@ -288,10 +289,12 @@ class SGD(Optimizer):
         """
         if not isinstance(params, list):
             params = [params]
+        if dev is None:
+            dev = tvm.cpu()
         self._set_params_and_dtype(params)
         self.state = (
             # num_steps = 0
-            tvm.nd.array(np.zeros((), "int64")),
+            tvm.nd.array(np.zeros((), "int64"), dev),
         )
         return self
 

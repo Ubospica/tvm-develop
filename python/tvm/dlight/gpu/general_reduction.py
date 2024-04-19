@@ -57,8 +57,8 @@ class GeneralReduction(GPUScheduleRule):
         # Align the number of block iters of the last block.
         num_last_block_iter = len(block_infos[-1].dom_kind())
         if num_last_block_iter == 0:
-            sch.add_unit_loop(block_infos[-1].block_rv)
-            num_last_block_iter = 1
+            return None
+
         if num_last_block_iter < len(dom_kind):
             dtype = block_infos[0].iters[0].var.dtype
             index_map = tir.IndexMap.from_func(

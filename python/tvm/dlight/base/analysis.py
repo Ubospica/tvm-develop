@@ -232,7 +232,7 @@ def collect_vars_used_in_prim_expr(expr: tir.PrimExpr) -> Set[tir.Var]:
     return tir_vars
 
 
-def detect_dominant_read(block: tir.Block) -> tir.PrimExpr:
+def detect_dominant_read(block: tir.Block) -> Optional[tir.PrimExpr]:
     """Detect the dominant read indices in the block."""
     dominant_read = None
     num_read_iters = -1
@@ -241,7 +241,8 @@ def detect_dominant_read(block: tir.Block) -> tir.PrimExpr:
         if num_read_iters < len(tir_vars):
             num_read_iters = len(tir_vars)
             dominant_read = buffer_region
-    assert dominant_read is not None
+    if dominant_read is None:
+        return None
     (result,) = dominant_read.buffer.offset_of([e.min for e in dominant_read.region])
     return result
 

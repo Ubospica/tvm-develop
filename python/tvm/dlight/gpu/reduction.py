@@ -23,10 +23,10 @@ from tvm.target import Target
 
 from ..base import (
     BlockInfo,
-    normalize_prim_func,
-    try_inline_contiguous_spatial,
     detect_dominant_read,
     is_broadcast_epilogue,
+    normalize_prim_func,
+    try_inline_contiguous_spatial,
 )
 from . import utils
 from .base import GPUScheduleRule
@@ -85,11 +85,14 @@ class Reduction(GPUScheduleRule):
         ):
             return None
         # Step 2. Normalize the block, merge spatial and reduction iters
+        dominant_read = detect_dominant_read(block_stmt)
+        if dominant_read is None:
+            return None
         is_inner_reduction, c_factor, loop_order, s_split_index = self._normalize(
             sch,
             block_info,
             arith.normalize_to_iter_sum(
-                detect_dominant_read(block_stmt),
+                dominant_read,
                 input_iters={i.var: i.dom for i in block_stmt.iter_vars},
             ),
         )

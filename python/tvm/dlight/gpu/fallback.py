@@ -57,14 +57,8 @@ class Fallback(GPUScheduleRule):
             dom_kind = block.dom_kind()
             block = block.block_rv
 
-            if (
-                any(
-                    [
-                        sch.get(loop_rv).thread_binding is not None
-                        for loop_rv in sch.get_loops(block)
-                    ]
-                )
-                or len(sch.get_loops(block)) == 0
+            if any(
+                [sch.get(loop_rv).thread_binding is not None for loop_rv in sch.get_loops(block)]
             ):
                 continue
 
